@@ -8,6 +8,7 @@ const BASE_OFFLINE_CAP_SECONDS = 8 * 3600;
 const LOG_MAX = 20;
 const COST_GROWTH = 1.15;
 const MAX_COST_REDUCTION = 0.9;
+const HOLD_AUTO_CLICK_INTERVAL_MS = 500;
 
 const GENERATORS = [
   { id: 'myceliumThread',  name: 'Mycelium Thread',  baseCost: 10,        baseSPS: 0.1,
@@ -1108,6 +1109,21 @@ const TREE_DATA = {
 
 const TREE_IDS = Object.keys(TREE_DATA);
 
+const SPECIAL_UPGRADES = {
+  holdAutoClick: {
+    name: 'Grasping Hyphae',
+    cost: 150,
+    desc: 'Holding the mushroom releases a click every 0.5s',
+    flavour: 'The hand no longer has to let go.',
+  },
+};
+
+function defaultSpecialUpgrades() {
+  return {
+    holdAutoClick: false,
+  };
+}
+
 // Resolve costs and attach tierIndex (T1..T15) for every tier across every tree.
 (function attachCostsAndIndices() {
   for (const treeId of TREE_IDS) {
@@ -1178,6 +1194,7 @@ function defaultState() {
     passiveSpsFromClicks: 0,
     lastSave: Date.now(),
     lastClickAt: 0,
+    specialUpgrades: defaultSpecialUpgrades(),
     generators,
     trees,
     milestonesSeen: [],
@@ -1203,6 +1220,7 @@ function load() {
         totalSporesEarned: parsed.totalSporesEarned || 0,
         totalClicks: parsed.totalClicks || 0,
         lastSave: parsed.lastSave || Date.now(),
+        specialUpgrades: { ...fresh.specialUpgrades, ...(parsed.specialUpgrades || {}) },
         generators: { ...fresh.generators, ...(parsed.generators || {}) },
         milestonesSeen: Array.isArray(parsed.milestonesSeen) ? parsed.milestonesSeen : [],
         eventLog: Array.isArray(parsed.eventLog) ? parsed.eventLog : [],
@@ -1225,6 +1243,7 @@ function load() {
       state = {
         ...fresh,
         ...parsed,
+        specialUpgrades: { ...fresh.specialUpgrades, ...(parsed.specialUpgrades || {}) },
         generators: { ...fresh.generators, ...(parsed.generators || {}) },
         trees: mergedTrees,
         milestonesSeen: Array.isArray(parsed.milestonesSeen) ? parsed.milestonesSeen : [],
@@ -1422,6 +1441,10 @@ function awardSpores(n) {
   state.totalSporesEarned += n;
 }
 
+function hasHoldAutoClick() {
+  return !!state.specialUpgrades?.holdAutoClick;
+}
+
 function handleClick(ev) {
   const spc = getSPC();
   awardSpores(spc);
@@ -1431,6 +1454,18 @@ function handleClick(ev) {
   spawnFloat(ev, spc);
   triggerSquish();
   checkMilestones();
+  render();
+}
+
+function buySpecialUpgrade(id) {
+  const upgrade = SPECIAL_UPGRADES[id];
+  if (!upgrade) return;
+  state.specialUpgrades = { ...defaultSpecialUpgrades(), ...(state.specialUpgrades || {}) };
+  if (state.specialUpgrades[id]) return;
+  if (state.spores < upgrade.cost) return;
+  state.spores -= upgrade.cost;
+  state.specialUpgrades[id] = true;
+  logEvent(`${upgrade.name} takes root. The hand learns to linger.`);
   render();
 }
 
@@ -1643,6 +1678,11 @@ function renderTreePanel() {
 
   let html = '';
 
+  if (activeTreeId === 'clicker') {
+    html += `<div class="tree-section-label">Reflex Growth</div>`;
+    html += specialUpgradeHTML('holdAutoClick');
+  }
+
   // Shared tiers T1-T3
   html += `<div class="tree-section-label">Shared Foundation</div>`;
   for (let i = 0; i < 3; i++) {
@@ -1688,6 +1728,11 @@ function renderTreePanel() {
       buyTier(activeTreeId, ti);
     });
   });
+  panel.querySelectorAll('.tier-card[data-special-upgrade]').forEach(el => {
+    el.addEventListener('click', () => {
+      buySpecialUpgrade(el.dataset.specialUpgrade);
+    });
+  });
   // Wire branch commit clicks
   panel.querySelectorAll('[data-commit-branch]').forEach(el => {
     el.addEventListener('click', (ev) => {
@@ -1698,6 +1743,26 @@ function renderTreePanel() {
       else commitBranch2(activeTreeId, choice);
     });
   });
+}
+
+function specialUpgradeHTML(id) {
+  const upgrade = SPECIAL_UPGRADES[id];
+  const purchased = !!state.specialUpgrades?.[id];
+  const canAfford = state.spores >= upgrade.cost;
+  let cls = 'tier-card special-upgrade-card';
+  if (purchased) cls += ' purchased';
+  else if (canAfford) cls += ' affordable';
+  else cls += ' poor';
+
+  return `
+    <div class="${cls}" data-special-upgrade="${id}">
+      <div class="tier-head">
+        <span><span class="tier-no">HOLD</span><span class="tier-name">${upgrade.name}</span></span>
+        <span class="tier-cost">${fmt(upgrade.cost)} 🍄</span>
+      </div>
+      <div class="tier-desc">${upgrade.desc}</div>
+      <div class="tier-flavour">${upgrade.flavour}</div>
+    </div>`;
 }
 
 function tierCardHTML(treeId, tierIndex, tier, classExtra) {
@@ -1756,6 +1821,20 @@ function branchChoiceHTML(treeId, branchNum, optA, optB, parentLabel) {
 // Fast path: when nothing structural changed, update only affordability state.
 function updateTreePanelLight() {
   const panel = $('tree-panel');
+  panel.querySelectorAll('.tier-card[data-special-upgrade]').forEach(el => {
+    const id = el.dataset.specialUpgrade;
+    const upgrade = SPECIAL_UPGRADES[id];
+    if (!upgrade) return;
+    const purchased = !!state.specialUpgrades?.[id];
+    const canAfford = state.spores >= upgrade.cost;
+    let state2;
+    if (purchased) state2 = 'purchased';
+    else if (canAfford) state2 = 'affordable';
+    else state2 = 'poor';
+    el.classList.remove('purchased', 'locked', 'affordable', 'poor');
+    el.classList.add(state2);
+  });
+
   panel.querySelectorAll('.tier-card[data-tier]').forEach(el => {
     const ti = parseInt(el.dataset.tier, 10);
     const ts = state.trees[activeTreeId];
@@ -1780,6 +1859,7 @@ function treeStructureKey() {
   const ts = state.trees[activeTreeId];
   let key = `${activeTreeId}|${ts.branch1}|${ts.branch2}|${treeUnlocked(activeTreeId) ? '1' : '0'}|`;
   for (let i = 0; i < 15; i++) key += ts.tiers[i] ? '1' : '0';
+  if (activeTreeId === 'clicker') key += `|hold:${hasHoldAutoClick() ? '1' : '0'}`;
   return key;
 }
 
@@ -1836,8 +1916,11 @@ function flashGenerator(genId) {
 function spawnFloat(ev, n) {
   const layer = $('float-layer');
   const rect = layer.getBoundingClientRect();
-  const x = ev.clientX - rect.left;
-  const y = ev.clientY - rect.top;
+  const point = ev && Number.isFinite(ev.clientX) && Number.isFinite(ev.clientY)
+    ? ev
+    : getClickAreaCenter();
+  const x = point.clientX - rect.left;
+  const y = point.clientY - rect.top;
   const el = document.createElement('div');
   el.className = 'float-num';
   el.textContent = '+' + fmt(n);
@@ -1845,6 +1928,14 @@ function spawnFloat(ev, n) {
   el.style.top  = y + 'px';
   layer.appendChild(el);
   setTimeout(() => el.remove(), 800);
+}
+
+function getClickAreaCenter() {
+  const rect = $('click-area').getBoundingClientRect();
+  return {
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.top + rect.height / 2,
+  };
 }
 
 function spawnParticles() {
@@ -1890,6 +1981,8 @@ function showToast(title, body) {
 
 let lastTick = Date.now();
 let phantomAccumulator = 0;
+let holdAutoTimer = null;
+let holdPointerPoint = null;
 
 function tick() {
   const now = Date.now();
@@ -1927,6 +2020,33 @@ function startLoop() {
   window.addEventListener('beforeunload', save);
 }
 
+function startHoldClicking(ev) {
+  if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+  ev.preventDefault();
+  holdPointerPoint = { clientX: ev.clientX, clientY: ev.clientY };
+  $('click-area').classList.toggle('hold-active', hasHoldAutoClick());
+  handleClick(ev);
+
+  if (!hasHoldAutoClick() || holdAutoTimer) return;
+  holdAutoTimer = setInterval(() => {
+    handleClick(holdPointerPoint || getClickAreaCenter());
+  }, HOLD_AUTO_CLICK_INTERVAL_MS);
+}
+
+function updateHoldPoint(ev) {
+  if (!holdAutoTimer) return;
+  holdPointerPoint = { clientX: ev.clientX, clientY: ev.clientY };
+}
+
+function stopHoldClicking() {
+  if (holdAutoTimer) {
+    clearInterval(holdAutoTimer);
+    holdAutoTimer = null;
+  }
+  holdPointerPoint = null;
+  $('click-area').classList.remove('hold-active');
+}
+
 function formatDuration(s) {
   if (s < 60) return Math.floor(s) + 's';
   if (s < 3600) return Math.floor(s / 60) + 'm';
@@ -1962,7 +2082,12 @@ function init() {
   if (hadSave) offlineCatchup();
   buildGenerators();
   buildTreeTabs();
-  $('click-area').addEventListener('click', handleClick);
+  const clickArea = $('click-area');
+  clickArea.addEventListener('pointerdown', startHoldClicking);
+  clickArea.addEventListener('pointermove', updateHoldPoint);
+  window.addEventListener('pointerup', stopHoldClicking);
+  window.addEventListener('pointercancel', stopHoldClicking);
+  window.addEventListener('blur', stopHoldClicking);
   spawnParticles();
   render();
   startLoop();
