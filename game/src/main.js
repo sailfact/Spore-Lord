@@ -9,6 +9,8 @@ const LOG_MAX = 20;
 const COST_GROWTH = 1.15;
 const MAX_COST_REDUCTION = 0.9;
 const HOLD_AUTO_CLICK_INTERVAL_MS = 500;
+const FORMAT_CACHE_LIMIT = 2500;
+const PHANTOM_FX_INTERVAL_MS = 450;
 
 const GENERATORS = [
   { id: 'myceliumThread',  name: 'Mycelium Thread',  baseCost: 10,        baseSPS: 0.1,
@@ -1124,6 +1126,12 @@ function defaultSpecialUpgrades() {
   };
 }
 
+function defaultSettings() {
+  return {
+    soundEnabled: true,
+  };
+}
+
 // Resolve costs and attach tierIndex (T1..T15) for every tier across every tree.
 (function attachCostsAndIndices() {
   for (const treeId of TREE_IDS) {
@@ -1195,6 +1203,7 @@ function defaultState() {
     lastSave: Date.now(),
     lastClickAt: 0,
     specialUpgrades: defaultSpecialUpgrades(),
+    settings: defaultSettings(),
     generators,
     trees,
     milestonesSeen: [],
@@ -1221,6 +1230,7 @@ function load() {
         totalClicks: parsed.totalClicks || 0,
         lastSave: parsed.lastSave || Date.now(),
         specialUpgrades: { ...fresh.specialUpgrades, ...(parsed.specialUpgrades || {}) },
+        settings: { ...fresh.settings, ...(parsed.settings || {}) },
         generators: { ...fresh.generators, ...(parsed.generators || {}) },
         milestonesSeen: Array.isArray(parsed.milestonesSeen) ? parsed.milestonesSeen : [],
         eventLog: Array.isArray(parsed.eventLog) ? parsed.eventLog : [],
@@ -1244,6 +1254,7 @@ function load() {
         ...fresh,
         ...parsed,
         specialUpgrades: { ...fresh.specialUpgrades, ...(parsed.specialUpgrades || {}) },
+        settings: { ...fresh.settings, ...(parsed.settings || {}) },
         generators: { ...fresh.generators, ...(parsed.generators || {}) },
         trees: mergedTrees,
         milestonesSeen: Array.isArray(parsed.milestonesSeen) ? parsed.milestonesSeen : [],
@@ -1292,6 +1303,18 @@ function totalUpgradesPurchased(s = state) {
     for (const k of Object.keys(tiers)) if (tiers[k]) n++;
   }
   return n;
+}
+
+function hasTreeTier(treeId, tierIndex) {
+  return !!state.trees?.[treeId]?.tiers?.[tierIndex];
+}
+
+function clickerHas(tierIndex, branch1 = null, branch2 = null) {
+  const ts = state.trees?.clicker;
+  if (!ts?.tiers?.[tierIndex]) return false;
+  if (branch1 && ts.branch1 !== branch1) return false;
+  if (branch2 && ts.branch2 !== branch2) return false;
+  return true;
 }
 
 function genBalanceWithin(s, tolerance) {
@@ -1447,11 +1470,15 @@ function hasHoldAutoClick() {
 
 function handleClick(ev) {
   const spc = getSPC();
+  const point = getEventPoint(ev);
+  const source = ev?.source || 'manual';
   awardSpores(spc);
   state.totalClicks++;
   state.lastClickAt = Date.now();
   state.passiveSpsFromClicks += getMults().spsPerClickRate;
-  spawnFloat(ev, spc);
+  playSound(source === 'phantom' ? 'phantom' : 'click');
+  spawnFloat(point, spc, { kind: source === 'phantom' ? 'phantom' : 'normal' });
+  spawnClickUpgradeEffects(point, state.totalClicks, source);
   triggerSquish();
   checkMilestones();
   render();
@@ -1465,6 +1492,7 @@ function buySpecialUpgrade(id) {
   if (state.spores < upgrade.cost) return;
   state.spores -= upgrade.cost;
   state.specialUpgrades[id] = true;
+  playSound('upgrade');
   logEvent(`${upgrade.name} takes root. The hand learns to linger.`);
   render();
 }
@@ -1477,6 +1505,7 @@ function buyGenerator(genId) {
   entry.count++;
   markMultsDirty();
   entry.cost = getGeneratorCost(genId);
+  playSound('purchase');
   flashGenerator(genId);
   checkMilestones();
   render();
@@ -1507,6 +1536,7 @@ function buyTier(treeId, tierIndex) {
   ts.tiers[tierIndex] = true;
   markMultsDirty();
   refreshGeneratorCosts();
+  playSound('upgrade');
   checkMilestones();
   render();
 }
@@ -1517,6 +1547,7 @@ function commitBranch1(treeId, choice) {
   if (!ts.tiers[2]) return; // need T3 purchased
   ts.branch1 = choice;
   markMultsDirty();
+  playSound('branch');
   logEvent(`A path was committed in the ${TREE_DATA[treeId].label} tree.`);
   render();
 }
@@ -1527,6 +1558,7 @@ function commitBranch2(treeId, choice) {
   if (!ts.tiers[7]) return; // need T8 purchased
   ts.branch2 = choice;
   markMultsDirty();
+  playSound('branch');
   logEvent(`A deeper path opens in the ${TREE_DATA[treeId].label} tree.`);
   render();
 }
@@ -1550,16 +1582,31 @@ function checkMilestones() {
 
 // ─── Formatting ────────────────────────────────────────────────────
 
+const numberFormatter = new Intl.NumberFormat('en-US');
+const formatCache = new Map();
+
+function cachedFormat(key, build) {
+  if (formatCache.has(key)) return formatCache.get(key);
+  const value = build();
+  if (formatCache.size > FORMAT_CACHE_LIMIT) formatCache.clear();
+  formatCache.set(key, value);
+  return value;
+}
+
 function fmt(n) {
   if (!isFinite(n)) return '∞';
   const abs = Math.abs(n);
   if (abs < Number.MAX_SAFE_INTEGER) {
-    if (abs > 0 && abs < 10 && abs !== Math.floor(abs)) return n.toFixed(1);
+    if (abs > 0 && abs < 10 && abs !== Math.floor(abs)) {
+      const fixed = n.toFixed(1);
+      return cachedFormat(`fixed:${fixed}`, () => fixed);
+    }
     if (abs >= 1e6) {
       // abbreviate big numbers
       return abbr(n);
     }
-    return Math.floor(n).toLocaleString('en-US');
+    const floored = Math.floor(n);
+    return cachedFormat(`int:${floored}`, () => numberFormatter.format(floored));
   }
   return abbr(n);
 }
@@ -1571,7 +1618,8 @@ function abbr(n) {
   const tier = Math.min(Math.floor(Math.log10(abs) / 3), suffixes.length - 1);
   const scaled = n / Math.pow(10, tier * 3);
   const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
-  return scaled.toFixed(digits) + suffixes[tier];
+  const rounded = scaled.toFixed(digits);
+  return cachedFormat(`abbr:${tier}:${rounded}`, () => rounded + suffixes[tier]);
 }
 
 function fmtTime(t) {
@@ -1579,6 +1627,128 @@ function fmtTime(t) {
 }
 
 const $ = (id) => document.getElementById(id);
+
+function setText(id, value) {
+  setNodeText($(id), value);
+}
+
+function setNodeText(node, value) {
+  if (!node || node.dataset.renderText === value) return;
+  node.textContent = value;
+  node.dataset.renderText = value;
+}
+
+// ─── Audio ─────────────────────────────────────────────────────────
+
+let audioContext = null;
+let audioGain = null;
+
+function soundEnabled() {
+  return state.settings?.soundEnabled !== false;
+}
+
+function ensureAudio() {
+  if (!soundEnabled()) return null;
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) return null;
+  if (!audioContext) {
+    audioContext = new AudioCtor();
+    audioGain = audioContext.createGain();
+    audioGain.gain.value = 0.22;
+    audioGain.connect(audioContext.destination);
+  }
+  if (audioContext.state === 'suspended') audioContext.resume();
+  return audioContext;
+}
+
+function playTone(freq, duration, options = {}) {
+  const ctx = ensureAudio();
+  if (!ctx || !audioGain) return;
+
+  const delay = options.delay || 0;
+  const volume = options.volume || 0.05;
+  const type = options.type || 'sine';
+  const endFreq = options.endFreq || freq;
+  const start = ctx.currentTime + delay;
+  const stop = start + duration;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, start);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), stop);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(volume, start + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, stop);
+  osc.connect(gain);
+  gain.connect(audioGain);
+  osc.start(start);
+  osc.stop(stop + 0.02);
+}
+
+function playChord(freqs, duration, options = {}) {
+  freqs.forEach((freq, i) => {
+    playTone(freq, duration, {
+      ...options,
+      delay: (options.delay || 0) + i * (options.stagger || 0),
+      volume: (options.volume || 0.04) / Math.sqrt(freqs.length),
+    });
+  });
+}
+
+function playSound(kind) {
+  if (!soundEnabled()) return;
+  switch (kind) {
+    case 'click':
+      playTone(520, 0.05, { endFreq: 720, type: 'triangle', volume: 0.035 });
+      break;
+    case 'phantom':
+      playTone(280, 0.08, { endFreq: 190, type: 'sine', volume: 0.028 });
+      playTone(560, 0.06, { delay: 0.035, endFreq: 430, type: 'sine', volume: 0.018 });
+      break;
+    case 'crit':
+      playChord([740, 1110, 1480], 0.16, { type: 'triangle', volume: 0.052, stagger: 0.012 });
+      break;
+    case 'overcharge':
+      playChord([220, 440, 880], 0.2, { type: 'sawtooth', volume: 0.042, stagger: 0.018 });
+      break;
+    case 'harmonic':
+      playChord([392, 588, 784, 1176], 0.22, { type: 'sine', volume: 0.046, stagger: 0.022 });
+      break;
+    case 'purchase':
+      playChord([330, 495, 660], 0.13, { type: 'triangle', volume: 0.04, stagger: 0.025 });
+      break;
+    case 'upgrade':
+      playChord([392, 523, 784, 1046], 0.18, { type: 'triangle', volume: 0.048, stagger: 0.028 });
+      break;
+    case 'branch':
+      playChord([196, 294, 392, 587], 0.32, { type: 'sine', volume: 0.055, stagger: 0.04 });
+      break;
+    case 'toggle':
+      playChord([523, 784], 0.12, { type: 'triangle', volume: 0.035, stagger: 0.025 });
+      break;
+  }
+}
+
+function updateSoundToggle() {
+  const button = $('sound-toggle');
+  if (!button) return;
+  const enabled = soundEnabled();
+  const nextState = enabled ? 'on' : 'off';
+  if (button.dataset.soundState === nextState) return;
+  button.dataset.soundState = nextState;
+  button.classList.toggle('muted', !enabled);
+  button.textContent = enabled ? '🔊' : '🔇';
+  button.setAttribute('aria-label', enabled ? 'Mute sound' : 'Unmute sound');
+}
+
+function toggleSound() {
+  state.settings = { ...defaultSettings(), ...(state.settings || {}) };
+  state.settings.soundEnabled = !soundEnabled();
+  updateSoundToggle();
+  if (soundEnabled()) playSound('toggle');
+  save();
+}
 
 // ─── UI: Generators ────────────────────────────────────────────────
 
@@ -1610,9 +1780,9 @@ function updateGenerators() {
     const cost = getGeneratorCost(g.id);
     const card = document.querySelector(`.gen-card[data-gen="${g.id}"]`);
     card.classList.toggle('disabled', state.spores < cost);
-    card.querySelector('[data-count]').textContent = entry.count;
-    card.querySelector('[data-cost]').textContent  = fmt(cost) + ' 🍄';
-    card.querySelector('[data-sps]').textContent   = fmt(getGeneratorUnitSPS(g.id)) + '/s each';
+    setNodeText(card.querySelector('[data-count]'), String(entry.count));
+    setNodeText(card.querySelector('[data-cost]'), fmt(cost) + ' 🍄');
+    setNodeText(card.querySelector('[data-sps]'), fmt(getGeneratorUnitSPS(g.id)) + '/s each');
   }
 }
 
@@ -1658,7 +1828,7 @@ function renderTreeTabs() {
     if (!tab) continue;
     tab.classList.toggle('active', activeTreeId === id);
     tab.classList.toggle('locked', !treeUnlocked(id));
-    tab.querySelector('[data-progress]').textContent = `${treeProgress(id)}/15`;
+    setNodeText(tab.querySelector('[data-progress]'), `${treeProgress(id)}/15`);
   }
 }
 
@@ -1854,6 +2024,7 @@ function updateTreePanelLight() {
 }
 
 let lastTreeStructureKey = '';
+let lastMushroomVisualClass = '';
 function treeStructureKey() {
   // Rebuild panel when branches change or tier-purchased set changes structurally.
   const ts = state.trees[activeTreeId];
@@ -1861,6 +2032,45 @@ function treeStructureKey() {
   for (let i = 0; i < 15; i++) key += ts.tiers[i] ? '1' : '0';
   if (activeTreeId === 'clicker') key += `|hold:${hasHoldAutoClick() ? '1' : '0'}`;
   return key;
+}
+
+function mushroomVisualClass() {
+  const classes = [];
+  const upgrades = totalUpgradesPurchased();
+  const genCount = totalGenCount();
+  const stage = Math.min(4, Math.max(
+    upgrades >= 16 || genCount >= 80 ? 4 : 0,
+    upgrades >= 8 || genCount >= 35 ? 3 : 0,
+    upgrades >= 3 || genCount >= 12 ? 2 : 0,
+    upgrades >= 1 || genCount >= 1 ? 1 : 0
+  ));
+
+  if (stage > 0) classes.push(`growth-${stage}`);
+  const clicker = state.trees.clicker;
+  if (clicker?.branch1 === 'red') classes.push('mut-red');
+  if (clicker?.branch1 === 'blue') classes.push('mut-blue');
+  if (clicker?.branch2) classes.push('mut-terminal');
+  if (hasHoldAutoClick()) classes.push('mut-hold');
+  if (hasTreeTier('clicker', 2) || clickerHas(5, 'red') || clickerHas(8, 'red', 'A')) {
+    classes.push('mut-crit');
+  }
+  if (getMults().phantomClicksPerSec > 0 || clickerHas(4, 'blue') || clickerHas(7, 'blue')) {
+    classes.push('mut-blue');
+  }
+  if (state.passiveSpsFromClicks > 0 || totalUpgradesPurchased() >= 10) classes.push('mut-sps');
+
+  return Array.from(new Set(classes)).join(' ');
+}
+
+function updateMushroomVisuals() {
+  const area = $('click-area');
+  const nextClass = mushroomVisualClass();
+  if (!area || nextClass === lastMushroomVisualClass) return;
+  for (const cls of Array.from(area.classList)) {
+    if (cls.startsWith('growth-') || cls.startsWith('mut-')) area.classList.remove(cls);
+  }
+  if (nextClass) area.classList.add(...nextClass.split(' '));
+  lastMushroomVisualClass = nextClass;
 }
 
 // ─── Log render ────────────────────────────────────────────────────
@@ -1878,9 +2088,11 @@ function renderLog() {
 
 let lastLogLen = -1;
 function render() {
-  $('spore-count').textContent = fmt(state.spores);
-  $('sps-display').textContent = fmt(getTotalSPS());
-  $('spc-display').textContent = fmt(getSPC());
+  setText('spore-count', fmt(state.spores));
+  setText('sps-display', fmt(getTotalSPS()));
+  setText('spc-display', fmt(getSPC()));
+  updateSoundToggle();
+  updateMushroomVisuals();
   updateGenerators();
   renderTreeTabs();
   const k = treeStructureKey();
@@ -1905,6 +2117,15 @@ function triggerSquish() {
   m.classList.add('clicked');
 }
 
+function triggerAreaPulse(kind) {
+  const area = $('click-area');
+  const cls = `fx-${kind}`;
+  area.classList.remove(cls);
+  void area.offsetWidth;
+  area.classList.add(cls);
+  setTimeout(() => area.classList.remove(cls), 650);
+}
+
 function flashGenerator(genId) {
   const card = document.querySelector(`.gen-card[data-gen="${genId}"]`);
   if (!card) return;
@@ -1913,21 +2134,26 @@ function flashGenerator(genId) {
   card.classList.add('bought-flash');
 }
 
-function spawnFloat(ev, n) {
+function spawnFloat(ev, n, options = {}) {
   const layer = $('float-layer');
   const rect = layer.getBoundingClientRect();
-  const point = ev && Number.isFinite(ev.clientX) && Number.isFinite(ev.clientY)
-    ? ev
-    : getClickAreaCenter();
+  const point = getEventPoint(ev);
   const x = point.clientX - rect.left;
   const y = point.clientY - rect.top;
   const el = document.createElement('div');
-  el.className = 'float-num';
-  el.textContent = '+' + fmt(n);
+  el.className = `float-num ${options.kind || ''}`.trim();
+  el.textContent = options.label || '+' + fmt(n);
   el.style.left = x + 'px';
   el.style.top  = y + 'px';
   layer.appendChild(el);
   setTimeout(() => el.remove(), 800);
+}
+
+function getEventPoint(ev) {
+  if (ev && Number.isFinite(ev.clientX) && Number.isFinite(ev.clientY)) {
+    return { clientX: ev.clientX, clientY: ev.clientY };
+  }
+  return getClickAreaCenter();
 }
 
 function getClickAreaCenter() {
@@ -1936,6 +2162,77 @@ function getClickAreaCenter() {
     clientX: rect.left + rect.width / 2,
     clientY: rect.top + rect.height / 2,
   };
+}
+
+function getCriticalProfile() {
+  if (clickerHas(14, 'red', 'A')) return { chance: 0.30, label: 'PYROSPORE CRITICAL', kind: 'pyro' };
+  if (clickerHas(8, 'red', 'A')) return { chance: 0.20, label: 'VOLCANIC CRITICAL', kind: 'pyro' };
+  if (clickerHas(5, 'red')) return { chance: 0.10, label: 'CRITICAL BLOOM', kind: 'critical' };
+  if (hasTreeTier('clicker', 2)) return { chance: 0.05, label: 'MYCOTOXIN SURGE', kind: 'toxin' };
+  return null;
+}
+
+function spawnClickUpgradeEffects(point, clickNumber, source) {
+  if (source === 'phantom') {
+    playSound('phantom');
+    triggerAreaPulse('phantom');
+    spawnBurst(point, 5, 'phantom');
+    return;
+  }
+
+  const crit = getCriticalProfile();
+  if (crit && Math.random() < crit.chance) {
+    playSound('crit');
+    triggerAreaPulse(crit.kind);
+    spawnBurst(point, crit.kind === 'toxin' ? 10 : 18, crit.kind);
+    spawnFloat(point, 0, { label: crit.label, kind: `${crit.kind} fx-label` });
+  }
+
+  if (clickerHas(4, 'red') && clickNumber % 10 === 0) {
+    playSound('overcharge');
+    triggerAreaPulse('overcharge');
+    spawnBurst(point, 16, 'overcharge');
+    spawnFloat(point, 0, { label: 'OVERCHARGE', kind: 'overcharge fx-label' });
+  }
+
+  if (clickerHas(10, 'red', 'A') && clickNumber % 25 === 0) {
+    playSound('overcharge');
+    triggerAreaPulse('pyro');
+    spawnBurst(point, 22, 'pyro');
+    spawnFloat(point, 0, { label: 'PYROCLASTIC BLOOM', kind: 'pyro fx-label' });
+  }
+
+  if (clickerHas(4, 'blue')) {
+    triggerAreaPulse('echo');
+    spawnBurst(point, 6, 'echo');
+  }
+
+  if (clickerHas(7, 'blue') && clickNumber % 20 === 0) {
+    playSound('harmonic');
+    triggerAreaPulse('harmonic');
+    spawnBurst(point, 18, 'harmonic');
+    spawnFloat(point, 0, { label: 'HARMONIC PULSE', kind: 'harmonic fx-label' });
+  }
+}
+
+function spawnBurst(point, count, kind) {
+  const layer = $('float-layer');
+  const rect = layer.getBoundingClientRect();
+  const x = point.clientX - rect.left;
+  const y = point.clientY - rect.top;
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i / count) + Math.random() * 0.45;
+    const distance = 34 + Math.random() * 78;
+    const el = document.createElement('div');
+    el.className = `fx-spore ${kind}`;
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    el.style.setProperty('--tx', Math.cos(angle) * distance + 'px');
+    el.style.setProperty('--ty', Math.sin(angle) * distance + 'px');
+    el.style.animationDelay = (Math.random() * 80).toFixed(0) + 'ms';
+    layer.appendChild(el);
+    setTimeout(() => el.remove(), 900);
+  }
 }
 
 function spawnParticles() {
@@ -1983,6 +2280,7 @@ let lastTick = Date.now();
 let phantomAccumulator = 0;
 let holdAutoTimer = null;
 let holdPointerPoint = null;
+let lastPhantomFxAt = 0;
 
 function tick() {
   const now = Date.now();
@@ -2001,11 +2299,19 @@ function tick() {
   const m = getMults();
   if (m.phantomClicksPerSec > 0) {
     phantomAccumulator += m.phantomClicksPerSec * dt;
+    let phantomClicks = 0;
     while (phantomAccumulator >= 1) {
       phantomAccumulator -= 1;
       const spc = getSPC();
       awardSpores(spc);
       state.passiveSpsFromClicks += m.spsPerClickRate;
+      phantomClicks++;
+    }
+    if (phantomClicks > 0 && now - lastPhantomFxAt >= PHANTOM_FX_INTERVAL_MS) {
+      const center = { ...getClickAreaCenter(), source: 'phantom' };
+      spawnFloat(center, 0, { label: 'PHANTOM ECHO', kind: 'phantom fx-label' });
+      spawnClickUpgradeEffects(center, state.totalClicks, 'phantom');
+      lastPhantomFxAt = now;
     }
   }
 
@@ -2085,6 +2391,7 @@ function init() {
   const clickArea = $('click-area');
   clickArea.addEventListener('pointerdown', startHoldClicking);
   clickArea.addEventListener('pointermove', updateHoldPoint);
+  $('sound-toggle').addEventListener('click', toggleSound);
   window.addEventListener('pointerup', stopHoldClicking);
   window.addEventListener('pointercancel', stopHoldClicking);
   window.addEventListener('blur', stopHoldClicking);

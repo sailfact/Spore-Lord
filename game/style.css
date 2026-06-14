@@ -4,6 +4,7 @@
     --spore-glow: #a8ff78;
     --biolume-cyan: #38f0d0;
     --fungal-purple: #8b5cf6;
+    --click-purple: #d9a7ff;
     --mycelium-dim: #2a2d3e;
     --crimson: #c14545;
     --void-blue: #3896f0;
@@ -67,6 +68,33 @@
     color: var(--text-muted);
     text-shadow: none;
     margin-top: 0.25rem;
+  }
+  .sound-toggle {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: 999px;
+    border: 1px solid var(--mycelium-dim);
+    background: rgba(13,15,26,0.72);
+    color: var(--click-purple);
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 0 14px rgba(139,92,246,0.16);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  }
+  .sound-toggle:hover,
+  .sound-toggle:focus-visible {
+    border-color: var(--click-purple);
+    box-shadow: 0 0 18px rgba(217,167,255,0.32);
+    outline: none;
+  }
+  .sound-toggle.muted {
+    opacity: 0.55;
+    color: var(--text-muted);
+    box-shadow: none;
   }
 
   main {
@@ -178,6 +206,16 @@
     cursor: pointer;
     touch-action: manipulation;
   }
+  .click-area::after {
+    content: '';
+    position: absolute;
+    inset: 15%;
+    border: 1px solid transparent;
+    border-radius: 50%;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 4;
+  }
   .click-area.hold-active .glow-ring {
     filter: blur(34px) brightness(1.35);
   }
@@ -185,6 +223,54 @@
     filter:
       drop-shadow(0 0 24px rgba(168,255,120,0.55))
       drop-shadow(0 0 18px rgba(56,240,208,0.35));
+  }
+  .click-area.fx-critical::after {
+    border-color: rgba(168,255,120,0.9);
+    box-shadow: 0 0 34px rgba(168,255,120,0.62), inset 0 0 28px rgba(168,255,120,0.25);
+    animation: impact-ring 0.62s ease-out;
+  }
+  .click-area.fx-toxin::after {
+    border-color: rgba(168,255,120,0.72);
+    box-shadow: 0 0 24px rgba(168,255,120,0.5), inset 0 0 24px rgba(168,255,120,0.18);
+    animation: toxin-ring 0.62s ease-out;
+  }
+  .click-area.fx-pyro::after {
+    border-color: rgba(193,69,69,0.95);
+    box-shadow: 0 0 38px rgba(193,69,69,0.72), inset 0 0 30px rgba(168,255,120,0.22);
+    animation: impact-ring 0.68s ease-out;
+  }
+  .click-area.fx-overcharge::after {
+    border-color: rgba(139,92,246,0.9);
+    box-shadow: 0 0 34px rgba(139,92,246,0.62), inset 0 0 30px rgba(56,240,208,0.22);
+    animation: impact-ring 0.6s ease-out;
+  }
+  .click-area.fx-echo::after {
+    border-color: rgba(56,240,208,0.7);
+    box-shadow: 0 0 22px rgba(56,240,208,0.38);
+    animation: echo-ring 0.58s ease-out;
+  }
+  .click-area.fx-harmonic::after {
+    border-color: rgba(56,240,208,0.95);
+    box-shadow: 0 0 38px rgba(56,240,208,0.65), inset 0 0 26px rgba(139,92,246,0.22);
+    animation: impact-ring 0.64s ease-out;
+  }
+  .click-area.fx-phantom::after {
+    border-color: rgba(139,92,246,0.55);
+    box-shadow: 0 0 24px rgba(139,92,246,0.35);
+    animation: echo-ring 0.58s ease-out;
+  }
+  @keyframes impact-ring {
+    0%   { transform: scale(0.58) rotate(0deg); opacity: 0.95; }
+    65%  { opacity: 0.45; }
+    100% { transform: scale(1.36) rotate(24deg); opacity: 0; }
+  }
+  @keyframes toxin-ring {
+    0%   { transform: scale(0.76); opacity: 0.9; filter: hue-rotate(0deg); }
+    100% { transform: scale(1.24); opacity: 0; filter: hue-rotate(70deg); }
+  }
+  @keyframes echo-ring {
+    0%   { transform: scale(0.72); opacity: 0.62; }
+    100% { transform: scale(1.52); opacity: 0; }
   }
   .glow-ring {
     position: absolute;
@@ -214,6 +300,168 @@
     transform-origin: center;
     filter: drop-shadow(0 0 20px rgba(168,255,120,0.35));
     pointer-events: none;
+    overflow: visible;
+  }
+  .mushroom-roots,
+  .mushroom-gills,
+  .mushroom-veins,
+  .mushroom-nodules,
+  .mushroom-ember,
+  .mushroom-cosmic,
+  .mushroom-crown {
+    opacity: 0;
+    transition: opacity 0.7s ease, transform 0.7s ease, filter 0.7s ease;
+    transform-origin: 100px 118px;
+  }
+  .mushroom-roots,
+  .mushroom-gills,
+  .mushroom-veins,
+  .mushroom-ember,
+  .mushroom-cosmic {
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .mushroom-roots {
+    stroke: var(--spore-glow);
+    stroke-width: 3;
+    stroke-dasharray: 8 7;
+    filter: drop-shadow(0 0 8px rgba(168,255,120,0.45));
+    transform: translateY(10px);
+  }
+  .mushroom-gills {
+    stroke: var(--biolume-cyan);
+    stroke-width: 3;
+    filter: drop-shadow(0 0 7px rgba(56,240,208,0.5));
+    transform: scaleY(0.86);
+  }
+  .mushroom-veins {
+    stroke: rgba(232,234,242,0.9);
+    stroke-width: 2.4;
+    stroke-dasharray: 58;
+    stroke-dashoffset: 58;
+    filter: drop-shadow(0 0 8px rgba(168,255,120,0.5));
+  }
+  .mushroom-nodules {
+    fill: var(--biolume-cyan);
+    filter: drop-shadow(0 0 9px rgba(56,240,208,0.75));
+    transform: scale(0.76);
+  }
+  .mushroom-ember {
+    stroke: #ffa8a8;
+    stroke-width: 3;
+    stroke-dasharray: 6 5;
+    filter: drop-shadow(0 0 10px rgba(193,69,69,0.7));
+  }
+  .mushroom-cosmic {
+    stroke: rgba(139,92,246,0.85);
+    stroke-width: 1.6;
+    filter: drop-shadow(0 0 9px rgba(139,92,246,0.65));
+    transform: rotate(-8deg) scale(0.9);
+  }
+  .mushroom-cosmic circle {
+    fill: var(--biolume-cyan);
+    stroke: none;
+    filter: drop-shadow(0 0 8px rgba(56,240,208,0.8));
+  }
+  .mushroom-crown {
+    fill: rgba(168,255,120,0.2);
+    stroke: var(--spore-glow);
+    stroke-width: 2;
+    filter: drop-shadow(0 0 9px rgba(168,255,120,0.55));
+    transform: scale(0.8) translateY(7px);
+  }
+  .click-area.growth-1 .mushroom-gills,
+  .click-area.growth-1 .mushroom-roots {
+    opacity: 0.58;
+    transform: translateY(0) scaleY(1);
+  }
+  .click-area.growth-2 .mushroom-gills,
+  .click-area.growth-2 .mushroom-roots,
+  .click-area.growth-2 .mushroom-veins {
+    opacity: 0.72;
+    transform: translateY(0) scale(1);
+  }
+  .click-area.growth-2 .mushroom-veins {
+    stroke-dashoffset: 0;
+  }
+  .click-area.growth-3 .mushroom-gills,
+  .click-area.growth-3 .mushroom-roots,
+  .click-area.growth-3 .mushroom-veins,
+  .click-area.growth-3 .mushroom-nodules {
+    opacity: 0.82;
+    transform: translateY(0) scale(1);
+  }
+  .click-area.growth-3 .mushroom-veins {
+    stroke-dashoffset: 0;
+  }
+  .click-area.growth-4 .mushroom-gills,
+  .click-area.growth-4 .mushroom-roots,
+  .click-area.growth-4 .mushroom-veins,
+  .click-area.growth-4 .mushroom-nodules,
+  .click-area.growth-4 .mushroom-crown {
+    opacity: 0.92;
+    transform: translateY(0) scale(1);
+  }
+  .click-area.growth-4 .mushroom-veins {
+    stroke-dashoffset: 0;
+  }
+  .click-area.mut-red .glow-ring {
+    background: conic-gradient(
+      from 0deg,
+      rgba(193,69,69,0.22),
+      rgba(168,255,120,0.18),
+      rgba(193,69,69,0.24),
+      rgba(168,255,120,0.18)
+    );
+  }
+  .click-area.mut-red .mushroom-ember {
+    opacity: 0.86;
+    animation: ember-crawl 2.8s linear infinite;
+  }
+  .click-area.mut-blue .glow-ring {
+    background: conic-gradient(
+      from 0deg,
+      rgba(56,240,208,0.2),
+      rgba(139,92,246,0.24),
+      rgba(56,240,208,0.2),
+      rgba(168,255,120,0.14)
+    );
+  }
+  .click-area.mut-blue .mushroom-cosmic {
+    opacity: 0.78;
+    transform: rotate(0deg) scale(1);
+    animation: orbit-breathe 7s ease-in-out infinite;
+  }
+  .click-area.mut-hold .mushroom-roots {
+    opacity: 0.9;
+    stroke-dasharray: 10 5;
+    animation: root-creep 3.4s linear infinite;
+  }
+  .click-area.mut-crit .mushroom-veins,
+  .click-area.mut-sps .mushroom-nodules {
+    filter: drop-shadow(0 0 13px rgba(168,255,120,0.8));
+  }
+  .click-area.mut-crit .mushroom-spots {
+    filter: drop-shadow(0 0 7px rgba(232,234,242,0.45));
+  }
+  .click-area.mut-terminal .mushroom-crown,
+  .click-area.mut-terminal .mushroom-cosmic,
+  .click-area.mut-terminal .mushroom-ember {
+    opacity: 0.95;
+  }
+  @keyframes root-creep {
+    0% { stroke-dashoffset: 0; }
+    100% { stroke-dashoffset: -30; }
+  }
+  @keyframes ember-crawl {
+    0% { stroke-dashoffset: 0; opacity: 0.64; }
+    50% { opacity: 1; }
+    100% { stroke-dashoffset: -22; opacity: 0.64; }
+  }
+  @keyframes orbit-breathe {
+    0%, 100% { transform: rotate(-4deg) scale(0.98); opacity: 0.62; }
+    50% { transform: rotate(5deg) scale(1.04); opacity: 0.95; }
   }
   @keyframes breathing {
     0%, 100% { transform: scale(1.0); }
@@ -248,15 +496,78 @@
     position: absolute;
     font-family: var(--font-mono);
     font-weight: 700;
-    color: var(--spore-glow);
-    text-shadow: 0 0 8px rgba(168,255,120,0.7);
+    color: var(--click-purple);
+    text-shadow: 0 0 10px rgba(217,167,255,0.95), 0 0 24px rgba(139,92,246,0.48);
     pointer-events: none;
     animation: float-up 0.8s ease-out forwards;
     transform: translate(-50%, -50%);
   }
+  .float-num.fx-label {
+    font-family: var(--font-display);
+    font-size: 0.78rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    animation: float-up-strong 1s ease-out forwards;
+  }
+  .float-num.critical,
+  .float-num.toxin {
+    color: var(--spore-glow);
+    text-shadow: 0 0 12px rgba(168,255,120,0.9), 0 0 28px rgba(168,255,120,0.35);
+  }
+  .float-num.pyro,
+  .float-num.overcharge {
+    color: #ffa8a8;
+    text-shadow: 0 0 12px rgba(193,69,69,0.95), 0 0 28px rgba(168,255,120,0.28);
+  }
+  .float-num.harmonic,
+  .float-num.phantom {
+    color: var(--biolume-cyan);
+    text-shadow: 0 0 12px rgba(56,240,208,0.95), 0 0 28px rgba(139,92,246,0.3);
+  }
   @keyframes float-up {
     0%   { transform: translate(-50%, -50%); opacity: 1; }
     100% { transform: translate(-50%, calc(-50% - 60px)); opacity: 0; }
+  }
+  @keyframes float-up-strong {
+    0%   { transform: translate(-50%, -50%) scale(0.82); opacity: 0; }
+    12%  { transform: translate(-50%, -56%) scale(1.08); opacity: 1; }
+    100% { transform: translate(-50%, calc(-50% - 86px)) scale(0.92); opacity: 0; }
+  }
+  .fx-spore {
+    position: absolute;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--spore-glow);
+    box-shadow: 0 0 10px var(--spore-glow);
+    transform: translate(-50%, -50%);
+    animation: fx-burst 0.82s cubic-bezier(0.18, 0.9, 0.25, 1) forwards;
+  }
+  .fx-spore.toxin,
+  .fx-spore.critical {
+    background: var(--spore-glow);
+    box-shadow: 0 0 12px rgba(168,255,120,0.9);
+  }
+  .fx-spore.pyro,
+  .fx-spore.overcharge {
+    background: #ffa8a8;
+    box-shadow: 0 0 12px rgba(193,69,69,0.9);
+  }
+  .fx-spore.echo,
+  .fx-spore.harmonic,
+  .fx-spore.phantom {
+    background: var(--biolume-cyan);
+    box-shadow: 0 0 12px rgba(56,240,208,0.86);
+  }
+  .fx-spore.phantom {
+    opacity: 0.7;
+    filter: saturate(0.8);
+  }
+  @keyframes fx-burst {
+    0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.35); }
+    16%  { opacity: 0.95; }
+    100% { opacity: 0; transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(0.05); }
   }
 
   .spc-display {
